@@ -307,7 +307,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
                   ],
                 ),
               ),
-              const SizedBox(height: 48),
+              const SizedBox(height: 24),
               // Bottom bar: Home | Skip | Restart
               _MobileBottomBar(
                 onHome: () async {
@@ -353,9 +353,14 @@ class _GameScreenState extends ConsumerState<GameScreen>
       barrierColor: Colors.black12,
       transitionAnimationController: _sheetAnimController,
       builder: (BuildContext sheetContext) {
-        return _KeyboardSheet(
-          textController: textController,
-          controller: controller,
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+          ),
+          child: _KeyboardSheet(
+            textController: textController,
+            controller: controller,
+          ),
         );
       },
     );
@@ -780,6 +785,8 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final double bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -792,12 +799,7 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
           ),
         ],
       ),
-      padding: EdgeInsets.fromLTRB(
-        16,
-        10,
-        16,
-        12 + MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: EdgeInsets.fromLTRB(16, 10, 16, bottomInset > 0 ? 12 : 12),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -908,8 +910,7 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 }
 
