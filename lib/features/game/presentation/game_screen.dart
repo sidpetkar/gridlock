@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,6 +11,9 @@ import 'home_screen.dart';
 import 'widgets/board_grid.dart';
 // import 'widgets/timer_bar.dart'; // TODO: re-enable for timed mode
 import 'widgets/word_input_panel.dart';
+
+// iOS web/PWA can report oversized keyboard insets and jump focused inputs.
+bool get _isIosWebPwa => kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
 class GameScreen extends ConsumerStatefulWidget {
   const GameScreen({super.key});
@@ -307,30 +311,33 @@ class _GameScreenState extends ConsumerState<GameScreen>
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 8),
               // Bottom bar: Home | Skip | Restart
-              _MobileBottomBar(
-                onHome: () async {
-                  await SoundService.playButtonTap();
-                  if (!context.mounted) return;
-                  Navigator.of(context).pushReplacement(
-                    PageRouteBuilder<void>(
-                      pageBuilder: (_, __, ___) => const HomeScreen(),
-                      transitionDuration: const Duration(milliseconds: 300),
-                      transitionsBuilder: (_, animation, __, child) =>
-                          FadeTransition(opacity: animation, child: child),
-                    ),
-                  );
-                },
-                onSkip: () async {
-                  await SoundService.playButtonTap();
-                  await controller.passTurn();
-                },
-                onRestart: () async {
-                  await SoundService.playButtonTap();
-                  controller.resetGame();
-                },
-                isInputEnabled: controller.isHumanInputEnabled,
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: _MobileBottomBar(
+                  onHome: () async {
+                    await SoundService.playButtonTap();
+                    if (!context.mounted) return;
+                    Navigator.of(context).pushReplacement(
+                      PageRouteBuilder<void>(
+                        pageBuilder: (_, __, ___) => const HomeScreen(),
+                        transitionDuration: const Duration(milliseconds: 300),
+                        transitionsBuilder: (_, animation, __, child) =>
+                            FadeTransition(opacity: animation, child: child),
+                      ),
+                    );
+                  },
+                  onSkip: () async {
+                    await SoundService.playButtonTap();
+                    await controller.passTurn();
+                  },
+                  onRestart: () async {
+                    await SoundService.playButtonTap();
+                    controller.resetGame();
+                  },
+                  isInputEnabled: controller.isHumanInputEnabled,
+                ),
               ),
             ],
           ),
@@ -353,14 +360,9 @@ class _GameScreenState extends ConsumerState<GameScreen>
       barrierColor: Colors.black12,
       transitionAnimationController: _sheetAnimController,
       builder: (BuildContext sheetContext) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
-          ),
-          child: _KeyboardSheet(
-            textController: textController,
-            controller: controller,
-          ),
+        return _KeyboardSheet(
+          textController: textController,
+          controller: controller,
         );
       },
     );
@@ -785,24 +787,33 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final double bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 12,
-            offset: Offset(0, -4),
-          ),
-        ],
+    // On iOS web/PWA, Safari resizes the visual viewport when the keyboard
+    // opens, so adding viewInsets would double-compensate and push the sheet
+    // to the top of the screen. Only apply the inset on non-iOS platforms.
+    final double keyboardInset = _isIosWebPwa
+        ? 0.0
+        : MediaQuery.of(context).viewInsets.bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: keyboardInset,
       ),
-      padding: EdgeInsets.fromLTRB(16, 10, 16, bottomInset > 0 ? 12 : 12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Color(0x22000000),
+              blurRadius: 12,
+              offset: Offset(0, -4),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
             // Handle bar
             Center(
               child: Container(
@@ -871,7 +882,7 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
                       textCapitalization: TextCapitalization.characters,
                       onChanged: _onChanged,
                       onSubmitted: _submit,
-                      cursorColor: const Color(0xFF111111),
+                      showCursor: false,
                       decoration: InputDecoration(
                         hintText: 'Type your word',
                         hintStyle: Theme.of(context)
@@ -910,7 +921,8 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
             ),
           ],
         ),
-      );
+      ),
+    );
   }
 }
 

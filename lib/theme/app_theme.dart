@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
   static ThemeData light() {
     const Color bg = Colors.white;
     const Color text = Color(0xFF111111);
 
-    final TextTheme serif = GoogleFonts.sourceSerif4TextTheme().apply(
+    final TextTheme serif = ThemeData().textTheme.apply(
+      fontFamily: 'SourceSerif4',
       bodyColor: text,
       displayColor: text,
     );
