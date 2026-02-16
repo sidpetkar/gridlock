@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'features/game/presentation/game_screen.dart';
+import 'features/game/presentation/home_screen.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
       title: 'Gridlock',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home: const GameScreen(),
+      home: const HomeScreen(),
     );
   }
 }

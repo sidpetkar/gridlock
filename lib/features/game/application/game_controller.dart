@@ -274,6 +274,18 @@ class GameController extends StateNotifier<GameState> {
   Position? _ghostCandidatePos;
   Direction? _ghostCandidateDir;
 
+  /// Autocomplete suggestions for a prefix (for the mobile keyboard).
+  List<String> getAutocompleteSuggestions(String prefix, {int limit = 5}) {
+    if (prefix.length < 4) return const <String>[];
+    return _dictionary.autocomplete(prefix, limit: limit);
+  }
+
+  /// Suggest the closest dictionary word (for "did you mean?" hints).
+  String? suggestClosest(String word) {
+    if (word.length < 4) return null;
+    return _dictionary.suggestClosestWord(word, maxDistance: 2);
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────
 
   Future<void> initialize() async {
@@ -573,7 +585,9 @@ class GameController extends StateNotifier<GameState> {
         gridBounds: bounds,
         movesA: seedBPlayer == PlayerId.a ? state.movesA + 1 : state.movesA,
         movesB: seedBPlayer == PlayerId.b ? state.movesB + 1 : state.movesB,
-        message: 'Game on. ${_playerLabel(next)} to move.',
+        message: next == PlayerId.a && state.opponentType == OpponentType.bot
+            ? 'Game on. You\'re next!'
+            : 'Game on. ${_playerLabel(next)} to move.',
       );
       await _maybePlayBotTurn();
       return;
@@ -841,7 +855,9 @@ class GameController extends StateNotifier<GameState> {
       direction: Direction.horizontal,
       consecutiveSkips: resetSkips ? 0 : state.consecutiveSkips + 1,
       totalTurnTime: nextTimes,
-      message: '$newMessage. ${_playerLabel(nextPlayer)} next.',
+      message: nextPlayer == PlayerId.a && state.opponentType == OpponentType.bot
+          ? '$newMessage. You\'re next!'
+          : '$newMessage. ${_playerLabel(nextPlayer)} next.',
       lastBotMovePositions: const <Position>[],
       ghostHintLetters: const <Position, String>{},
       showDirectionArrows: false,

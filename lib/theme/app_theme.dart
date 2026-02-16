@@ -3,7 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
   static ThemeData light() {
-    const Color bg = Color(0xFFF7F7F8);
+    const Color bg = Colors.white;
     const Color text = Color(0xFF111111);
 
     final TextTheme serif = GoogleFonts.sourceSerif4TextTheme().apply(

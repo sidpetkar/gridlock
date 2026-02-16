@@ -6,8 +6,10 @@
     "background_color": "#FFFFFF",
     "theme_color": "#111111",
     "description": "Strategic word-building game. Create intersecting words on an expanding grid and outscore your opponent!",
-    "orientation": "portrait-primary",
+    "orientation": "portrait",
     "prefer_related_applications": false,
+    "scope": "/",
+    "categories": ["games", "entertainment"],
     "icons": [
         {
             "src": "icons/Icon-192.png",

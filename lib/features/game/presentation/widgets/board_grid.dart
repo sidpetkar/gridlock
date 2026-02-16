@@ -30,6 +30,7 @@ class BoardGrid extends StatelessWidget {
     required this.ghostLetters,
     required this.showDirectionArrows,
     this.gridBounds,
+    this.isMobile = false,
   });
 
   final BoardState board;
@@ -45,6 +46,7 @@ class BoardGrid extends StatelessWidget {
   final bool showSelection;
   final bool showDirectionArrows;
   final GridBounds? gridBounds;
+  final bool isMobile;
 
   @override
   Widget build(BuildContext context) {
@@ -52,21 +54,77 @@ class BoardGrid extends StatelessWidget {
     final int maxX = _calcMaxX();
     final int minY = _calcMinY();
     final int maxY = _calcMaxY();
-    final double width = MediaQuery.of(context).size.width;
-    final double cellSize = width < 560 ? 42 : 50;
 
     final Set<Position> highlightSet = highlightPositions.toSet();
     final List<Color> palette =
         kColorPalettes[colorThemeIndex % kColorPalettes.length];
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    // On mobile: use LayoutBuilder to get actual available pixel width
+    // and compute cell size so the grid always fits without scrolling.
+    if (isMobile) {
+      return LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final int cols = maxX - minX + 1;
+          final int rows = maxY - minY + 1;
+          // Width-based sizing so grid fills horizontal space
+          final double maxByWidth = constraints.maxWidth / cols;
+          // Also check height to avoid overflow, but prefer width
+          final double maxByHeight =
+              constraints.hasBoundedHeight ? constraints.maxHeight / rows : 48;
+          final double cellSize =
+              maxByWidth < maxByHeight ? maxByWidth : maxByHeight;
+          final double finalSize = (cellSize.floorToDouble()).clamp(20.0, 48.0);
+
+          return Center(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    for (int y = minY; y <= maxY; y++)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          for (int x = minX; x <= maxX; x++)
+                            _GridCell(
+                              size: finalSize,
+                              position: Position(x, y),
+                              cell: board.cells[Position(x, y)],
+                              previewLetter: previewLetters[Position(x, y)],
+                              ghostLetter: ghostLetters[Position(x, y)],
+                              selected:
+                                  showSelection && selected == Position(x, y),
+                              direction: direction,
+                              highlight:
+                                  highlightSet.contains(Position(x, y)),
+                              palette: palette,
+                              onTap: () => onSelect(Position(x, y)),
+                              isMobile: true,
+                            ),
+                        ],
+                      ),
+                  ],
+                ),
+                if (showDirectionArrows && selected != null)
+                  ..._buildFloatingArrows(minX, minY, finalSize),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    // Desktop: fixed cell size with horizontal scroll
+    final double width = MediaQuery.of(context).size.width;
+    final double cellSize = width < 560 ? 42 : 50;
+
+    return Center(
       child: SingleChildScrollView(
-        scrollDirection: Axis.vertical,
+        scrollDirection: Axis.horizontal,
         child: Stack(
           clipBehavior: Clip.none,
           children: <Widget>[
-            // ── Grid ──
             Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -87,12 +145,12 @@ class BoardGrid extends StatelessWidget {
                           highlight: highlightSet.contains(Position(x, y)),
                           palette: palette,
                           onTap: () => onSelect(Position(x, y)),
+                          isMobile: false,
                         ),
                     ],
                   ),
               ],
             ),
-            // ── Floating direction arrows ──
             if (showDirectionArrows && selected != null)
               ..._buildFloatingArrows(minX, minY, cellSize),
           ],
@@ -240,6 +298,7 @@ class _GridCell extends StatefulWidget {
     required this.highlight,
     required this.palette,
     required this.onTap,
+    this.isMobile = false,
   });
 
   final double size;
@@ -252,6 +311,7 @@ class _GridCell extends StatefulWidget {
   final bool highlight;
   final List<Color> palette; // [userColor, botColor, sharedColor]
   final VoidCallback onTap;
+  final bool isMobile;
 
   @override
   State<_GridCell> createState() => _GridCellState();
@@ -343,13 +403,17 @@ class _GridCellState extends State<_GridCell>
 
   @override
   Widget build(BuildContext context) {
+    final Color borderColor = widget.selected
+        ? const Color(0xFF111111)
+        : widget.isMobile
+            ? const Color(0xFFE8E8E8)
+            : const Color(0xFFD1D5DB);
+
     final BoxDecoration decoration = BoxDecoration(
       color: _cellColor(widget.cell),
       border: Border.all(
-        color: widget.selected
-            ? const Color(0xFF111111)
-            : const Color(0xFFD1D5DB),
-        width: widget.selected ? 1.4 : 1,
+        color: borderColor,
+        width: widget.selected ? 1.4 : 0.5,
       ),
     );
 
