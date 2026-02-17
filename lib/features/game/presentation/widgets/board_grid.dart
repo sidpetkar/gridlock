@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../services/haptic_service.dart';
 import '../../application/game_controller.dart' show GamePhase, GridBounds;
 import '../../domain/board_engine.dart';
 
@@ -12,6 +13,12 @@ const List<List<Color>> kColorPalettes = <List<Color>>[
   [Color(0xFFFADBD8), Color(0xFFD4EFDF), Color(0xFFAEBFC9)], // rose/sage
   [Color(0xFFD5F5E3), Color(0xFFFDEBD0), Color(0xFFAEBFC9)], // mint/peach
   [Color(0xFFD6DBDF), Color(0xFFD2B4DE), Color(0xFFAEBFC9)], // silver/orchid
+  [Color(0xFFF5E6CC), Color(0xFFD0ECE7), Color(0xFFBFC9CA)], // sand/teal
+  [Color(0xFFDCE8F5), Color(0xFFF5D5D5), Color(0xFFB8C4CE)], // sky/blush
+  [Color(0xFFE0D4E8), Color(0xFFF9EAD3), Color(0xFFB9C2CB)], // lilac/butter
+  [Color(0xFFCDE8DC), Color(0xFFE8D8EE), Color(0xFFB5C0CA)], // seafoam/mauve
+  [Color(0xFFF2E2D5), Color(0xFFCFE2F3), Color(0xFFB7C3CD)], // apricot/ice
+  [Color(0xFFDAE5D0), Color(0xFFE8DFF5), Color(0xFFB3BFC9)], // sage/wisteria
 ];
 
 class BoardGrid extends StatelessWidget {
@@ -165,27 +172,37 @@ class BoardGrid extends StatelessWidget {
     final double top = (sel.y - minY) * cellSize;
     const double arrowSize = 28;
 
+    final int maxX = _calcMaxX();
+    final int maxY = _calcMaxY();
+
+    // Minimum word length is 3, so we need at least 2 more cells in each
+    // direction from the selected position.
+    final bool canGoRight = maxX - sel.x >= 2;
+    final bool canGoDown = maxY - sel.y >= 2;
+
     return <Widget>[
-      // Right arrow → horizontal
-      Positioned(
-        left: left + cellSize + 4,
-        top: top + (cellSize - arrowSize) / 2,
-        child: _ArrowButton(
-          icon: Icons.arrow_forward,
-          size: arrowSize,
-          onTap: () => onDirectionChosen(Direction.horizontal),
+      // Right arrow → horizontal (only if enough room for a 3-letter word)
+      if (canGoRight)
+        Positioned(
+          left: left + cellSize + 4,
+          top: top + (cellSize - arrowSize) / 2,
+          child: _ArrowButton(
+            icon: Icons.arrow_forward,
+            size: arrowSize,
+            onTap: () => onDirectionChosen(Direction.horizontal),
+          ),
         ),
-      ),
-      // Down arrow → vertical
-      Positioned(
-        left: left + (cellSize - arrowSize) / 2,
-        top: top + cellSize + 4,
-        child: _ArrowButton(
-          icon: Icons.arrow_downward,
-          size: arrowSize,
-          onTap: () => onDirectionChosen(Direction.vertical),
+      // Down arrow → vertical (only if enough room for a 3-letter word)
+      if (canGoDown)
+        Positioned(
+          left: left + (cellSize - arrowSize) / 2,
+          top: top + cellSize + 4,
+          child: _ArrowButton(
+            icon: Icons.arrow_downward,
+            size: arrowSize,
+            onTap: () => onDirectionChosen(Direction.vertical),
+          ),
         ),
-      ),
     ];
   }
 
@@ -273,7 +290,10 @@ class _ArrowButton extends StatelessWidget {
       color: const Color(0xFF111111),
       child: InkWell(
         customBorder: const CircleBorder(),
-        onTap: onTap,
+        onTap: () {
+          HapticService.mediumTap();
+          onTap();
+        },
         child: SizedBox(
           width: size,
           height: size,
@@ -435,7 +455,8 @@ class _GridCellState extends State<_GridCell>
         child: Text(
           displayLetter,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
+            fontFamily: 'SourceSerif4',
+            fontWeight: FontWeight.w700,
             color: isPreview
                 ? const Color(0xFF6B7280)
                 : const Color(0xFF111111),
@@ -448,7 +469,10 @@ class _GridCellState extends State<_GridCell>
     final bool animating = _blinkAnimation != null && _blinkController != null;
 
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: () {
+        HapticService.lightTap();
+        widget.onTap();
+      },
       child: animating
           ? AnimatedBuilder(
               animation: _blinkAnimation!,

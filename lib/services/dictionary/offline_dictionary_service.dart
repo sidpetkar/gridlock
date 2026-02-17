@@ -5,18 +5,20 @@ import 'package:flutter/services.dart';
 class _TrieNode {
   final Map<String, _TrieNode> children = <String, _TrieNode>{};
   bool isWord = false;
+  int frequency = 0;
 }
 
 class _Trie {
   final _TrieNode _root = _TrieNode();
 
-  void insert(String word) {
+  void insert(String word, {int frequency = 0}) {
     _TrieNode node = _root;
     for (int i = 0; i < word.length; i++) {
       final String ch = word[i];
       node = node.children.putIfAbsent(ch, () => _TrieNode());
     }
     node.isWord = true;
+    node.frequency = frequency;
   }
 
   bool contains(String word) {
@@ -41,7 +43,8 @@ class _Trie {
     return true;
   }
 
-  /// Collect all words under [prefix] (up to [limit]).
+  /// Collect all words under [prefix] (up to [limit]), sorted by frequency
+  /// (most common first).
   List<String> wordsWithPrefix(String prefix, {int limit = 20}) {
     _TrieNode? node = _root;
     for (int i = 0; i < prefix.length; i++) {
@@ -50,26 +53,29 @@ class _Trie {
         return const <String>[];
       }
     }
-    final List<String> results = <String>[];
-    _collect(node!, prefix, results, limit);
-    return results;
+    // Over-collect candidates so we can sort by frequency and return the
+    // most recognisable words first.
+    final List<(String, int)> candidates = <(String, int)>[];
+    _collectWithFreq(node!, prefix, candidates, limit * 3);
+    candidates.sort(((String, int) a, (String, int) b) => b.$2.compareTo(a.$2));
+    return candidates.take(limit).map(((String, int) e) => e.$1).toList();
   }
 
-  void _collect(
+  void _collectWithFreq(
     _TrieNode node,
     String current,
-    List<String> results,
-    int limit,
+    List<(String, int)> results,
+    int cap,
   ) {
-    if (results.length >= limit) {
+    if (results.length >= cap) {
       return;
     }
     if (node.isWord) {
-      results.add(current);
+      results.add((current, node.frequency));
     }
     for (final MapEntry<String, _TrieNode> entry in node.children.entries) {
-      _collect(entry.value, current + entry.key, results, limit);
-      if (results.length >= limit) {
+      _collectWithFreq(entry.value, current + entry.key, results, cap);
+      if (results.length >= cap) {
         return;
       }
     }
@@ -101,26 +107,44 @@ class OfflineDictionaryService {
       return;
     }
 
-    // Load full dictionary.
+    // Load full dictionary (format: "word\tfrequency" per line).
     final String raw = await rootBundle.loadString(
       'assets/dictionary/words_en.txt',
     );
-    final List<String> parsed =
-        raw
-            .split(RegExp(r'\r?\n'))
-            .map((line) => line.trim().toUpperCase())
-            .where(
-              (line) => line.length >= 2 && RegExp(r'^[A-Z]+$').hasMatch(line),
-            )
-            .toSet()
-            .toList()
-          ..sort((a, b) => a.length.compareTo(b.length));
+    final Map<String, int> freqMap = <String, int>{};
+    final Set<String> seen = <String>{};
+    final List<String> parsed = <String>[];
+    final RegExp alphaOnly = RegExp(r'^[A-Z]+$');
+
+    for (final String line in raw.split(RegExp(r'\r?\n'))) {
+      final String trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+
+      // Support both "word\tfrequency" and plain "word" formats.
+      String word;
+      int freq;
+      final int tabIdx = trimmed.indexOf('\t');
+      if (tabIdx > 0) {
+        word = trimmed.substring(0, tabIdx).toUpperCase();
+        freq = int.tryParse(trimmed.substring(tabIdx + 1)) ?? 0;
+      } else {
+        word = trimmed.toUpperCase();
+        freq = 0;
+      }
+
+      if (word.length >= 2 && alphaOnly.hasMatch(word) && seen.add(word)) {
+        parsed.add(word);
+        freqMap[word] = freq;
+      }
+    }
+
+    parsed.sort((a, b) => a.length.compareTo(b.length));
     _wordList = parsed;
     _words = parsed.toSet();
 
-    // Insert all words into Trie.
+    // Insert all words into Trie with frequency data.
     for (final String word in _wordList) {
-      _trie.insert(word);
+      _trie.insert(word, frequency: freqMap[word] ?? 0);
     }
 
     // Load common words.

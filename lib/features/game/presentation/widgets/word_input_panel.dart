@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../services/haptic_service.dart';
 import '../../application/game_controller.dart';
 
 class WordInputPanel extends StatefulWidget {
@@ -133,7 +134,10 @@ class _WordInputPanelState extends State<WordInputPanel> {
               Expanded(
                 child: FilledButton(
                   onPressed: widget.isInputEnabled
-                      ? () => widget.onSubmit(_wordController.text)
+                      ? () {
+                          HapticService.heavyTap();
+                          widget.onSubmit(_wordController.text);
+                        }
                       : null,
                   style: FilledButton.styleFrom(
                     shape: buttonShape,
@@ -145,7 +149,12 @@ class _WordInputPanelState extends State<WordInputPanel> {
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: widget.isInputEnabled ? widget.onPass : null,
+                  onPressed: widget.isInputEnabled
+                      ? () {
+                          HapticService.mediumTap();
+                          widget.onPass();
+                        }
+                      : null,
                   style: OutlinedButton.styleFrom(shape: buttonShape),
                   child: const Text('Pass'),
                 ),
@@ -157,7 +166,12 @@ class _WordInputPanelState extends State<WordInputPanel> {
             children: <Widget>[
               Expanded(
                 child: OutlinedButton(
-                  onPressed: widget.isInputEnabled ? widget.onOfflineHint : null,
+                  onPressed: widget.isInputEnabled
+                      ? () {
+                          HapticService.lightTap();
+                          widget.onOfflineHint();
+                        }
+                      : null,
                   style: OutlinedButton.styleFrom(shape: buttonShape),
                   child: const Text('Ghost hint'),
                 ),
@@ -167,7 +181,10 @@ class _WordInputPanelState extends State<WordInputPanel> {
                 child: OutlinedButton(
                   onPressed:
                       widget.isInputEnabled && !widget.isAiThinking
-                          ? widget.onAiHint
+                          ? () {
+                              HapticService.lightTap();
+                              widget.onAiHint();
+                            }
                           : null,
                   style: OutlinedButton.styleFrom(shape: buttonShape),
                   child: Text(widget.isAiThinking ? 'Thinking...' : 'AI hint'),

@@ -8,8 +8,9 @@ import '../../game/domain/move_validator.dart';
 import '../../game/domain/scoring_engine.dart';
 import '../../../services/dictionary/offline_dictionary_service.dart';
 import '../../../services/hints/gemini_hint_service.dart';
+import '../../../services/settings_service.dart';
 
-const int kTurnSeconds = 30;
+const int kDefaultTurnSeconds = 30;
 const int kMaxConsecutiveSkips = 4;
 
 enum GamePhase { seedA, seedB, playing, finished }
@@ -72,16 +73,17 @@ class GameState {
     required this.colorThemeIndex,
     required this.ghostHintLetters,
     required this.showDirectionArrows,
+    required this.userSkipCount,
   });
 
-  factory GameState.initial() {
+  factory GameState.initial({int turnSeconds = kDefaultTurnSeconds}) {
     return GameState(
       board: BoardState.empty(),
       phase: GamePhase.seedA,
       currentPlayer: PlayerId.a,
       direction: Direction.horizontal,
       inputMode: InputMode.fullWord,
-      remainingSeconds: kTurnSeconds,
+      remainingSeconds: turnSeconds,
       consecutiveSkips: 0,
       message: 'Player A: Enter first horizontal word.',
       selectedPosition: Position(0, 0),
@@ -102,9 +104,10 @@ class GameState {
       movesB: 0,
       availableMoves: const <String>[],
       lastBotMovePositions: const <Position>[],
-      colorThemeIndex: 0,
+      colorThemeIndex: Random().nextInt(12),
       ghostHintLetters: const <Position, String>{},
       showDirectionArrows: false,
+      userSkipCount: 0,
     );
   }
 
@@ -150,6 +153,10 @@ class GameState {
   /// Whether floating direction arrows are visible on the grid.
   final bool showDirectionArrows;
 
+  /// How many consecutive turns the user has skipped / timed out.
+  /// Resets when the user successfully places a word.
+  final int userSkipCount;
+
   GameState copyWith({
     BoardState? board,
     GamePhase? phase,
@@ -180,6 +187,7 @@ class GameState {
     int? colorThemeIndex,
     Map<Position, String>? ghostHintLetters,
     bool? showDirectionArrows,
+    int? userSkipCount,
   }) {
     return GameState(
       board: board ?? this.board,
@@ -215,6 +223,7 @@ class GameState {
       colorThemeIndex: colorThemeIndex ?? this.colorThemeIndex,
       ghostHintLetters: ghostHintLetters ?? this.ghostHintLetters,
       showDirectionArrows: showDirectionArrows ?? this.showDirectionArrows,
+      userSkipCount: userSkipCount ?? this.userSkipCount,
     );
   }
 }
@@ -236,6 +245,7 @@ final gameControllerProvider = StateNotifierProvider<GameController, GameState>(
       moveValidator: MoveValidator(),
       scoringEngine: ScoringEngine(),
       geminiHintService: ref.read(geminiHintProvider),
+      readSettings: () => ref.read(settingsProvider),
     );
     controller.initialize();
     return controller;
@@ -249,20 +259,26 @@ class GameController extends StateNotifier<GameState> {
     required MoveValidator moveValidator,
     required ScoringEngine scoringEngine,
     required GeminiHintService geminiHintService,
+    required SettingsState Function() readSettings,
   }) : _dictionary = dictionary,
        _boardEngine = boardEngine,
        _moveValidator = moveValidator,
        _scoringEngine = scoringEngine,
        _geminiHintService = geminiHintService,
-       super(GameState.initial());
+       _readSettings = readSettings,
+       super(GameState.initial(turnSeconds: readSettings().timerSeconds));
 
   final OfflineDictionaryService _dictionary;
   final BoardEngine _boardEngine;
   final MoveValidator _moveValidator;
   final ScoringEngine _scoringEngine;
   final GeminiHintService _geminiHintService;
+  final SettingsState Function() _readSettings;
   Timer? _turnTimer;
   bool _botTurnInProgress = false;
+
+  int get _turnSeconds => _readSettings().timerSeconds;
+  bool get _timerEnabled => _readSettings().timerEnabled;
 
   /// Cached ghost hint candidates for the current selection + direction.
   List<String> _ghostCandidates = const <String>[];
@@ -295,14 +311,15 @@ class GameController extends StateNotifier<GameState> {
       message:
           '${_playerLabel(state.currentPlayer)}: Enter first horizontal word.',
     );
-    // _startTurnTimer(); // TODO: re-enable for timed mode
+    if (_timerEnabled) _startTurnTimer();
     unawaited(_maybePlayBotTurn());
   }
 
   void resetGame() {
     _turnTimer?.cancel();
+    _botTurnInProgress = false;
     const PlayerId starter = PlayerId.a;
-    state = GameState.initial().copyWith(
+    state = GameState.initial(turnSeconds: _turnSeconds).copyWith(
       opponentType: state.opponentType,
       isDictionaryReady: state.isDictionaryReady,
       currentPlayer: starter,
@@ -313,9 +330,10 @@ class GameController extends StateNotifier<GameState> {
       lastRoundOutcome: state.lastRoundOutcome,
       inputNonce: state.inputNonce + 1,
       isPaused: false,
-      colorThemeIndex: (state.colorThemeIndex + 1) % 6,
+      colorThemeIndex: Random().nextInt(12),
+      userSkipCount: 0,
     );
-    // _startTurnTimer(); // TODO: re-enable for timed mode
+    if (_timerEnabled) _startTurnTimer();
     unawaited(_maybePlayBotTurn());
   }
 
@@ -325,7 +343,7 @@ class GameController extends StateNotifier<GameState> {
     }
     _turnTimer?.cancel();
     const PlayerId starter = PlayerId.a;
-    state = GameState.initial().copyWith(
+    state = GameState.initial(turnSeconds: _turnSeconds).copyWith(
       opponentType: type,
       isDictionaryReady: state.isDictionaryReady,
       currentPlayer: starter,
@@ -334,8 +352,28 @@ class GameController extends StateNotifier<GameState> {
       inputNonce: state.inputNonce + 1,
       isPaused: false,
     );
-    // _startTurnTimer(); // TODO: re-enable for timed mode
+    if (_timerEnabled) _startTurnTimer();
     unawaited(_maybePlayBotTurn());
+  }
+
+  /// Called when settings change (e.g. timer toggled on/off or duration
+  /// changed) so the running game can adapt without a full reset.
+  void syncTimerSettings() {
+    if (_timerEnabled) {
+      // Update remaining seconds to the new duration if the timer wasn't
+      // already running, or if the new duration is shorter than current
+      // remaining time.
+      if (_turnTimer == null || !_turnTimer!.isActive) {
+        state = state.copyWith(remainingSeconds: _turnSeconds);
+        _startTurnTimer();
+      } else if (state.remainingSeconds > _turnSeconds) {
+        state = state.copyWith(remainingSeconds: _turnSeconds);
+      }
+    } else {
+      // Timer disabled – stop counting and reset display.
+      _turnTimer?.cancel();
+      _turnTimer = null;
+    }
   }
 
   // ── UI interaction (human-gated) ──────────────────────────
@@ -453,6 +491,23 @@ class GameController extends StateNotifier<GameState> {
     if (state.phase == GamePhase.finished || !_isHumanInputEnabled) {
       return;
     }
+
+    // During seed phases, auto-play on behalf of user instead of skipping.
+    if (state.phase == GamePhase.seedA || state.phase == GamePhase.seedB) {
+      final int newSkips = state.userSkipCount + 1;
+      state = state.copyWith(userSkipCount: newSkips);
+      await _autoPlaySeedOnBehalf();
+      return;
+    }
+
+    // During playing phase, track consecutive user skips.
+    final int newSkips = state.userSkipCount + 1;
+    if (newSkips >= 3) {
+      state = state.copyWith(userSkipCount: newSkips);
+      _finishGame("Looks like you stepped away. Let's wrap this one up!");
+      return;
+    }
+    state = state.copyWith(userSkipCount: newSkips);
     await _passTurnInternal();
   }
 
@@ -463,7 +518,12 @@ class GameController extends StateNotifier<GameState> {
         !_isHumanInputEnabled) {
       return;
     }
+    final int prevMoves = state.totalMoves;
     await _submitWordInternal(rawWord);
+    // Reset skip counter when user successfully places a word.
+    if (state.totalMoves > prevMoves) {
+      state = state.copyWith(userSkipCount: 0);
+    }
   }
 
   // ── Internal submit (NO human gate -- bot uses this) ──────
@@ -516,7 +576,7 @@ class GameController extends StateNotifier<GameState> {
         currentPlayer: seedBPlayer,
         direction: Direction.vertical,
         selectedPosition: const Position(0, 0),
-        remainingSeconds: kTurnSeconds,
+        remainingSeconds: _turnSeconds,
         draftWord: '',
         liveValidationMessage: null,
         inputNonce: state.inputNonce + 1,
@@ -577,7 +637,7 @@ class GameController extends StateNotifier<GameState> {
         currentPlayer: next,
         direction: Direction.horizontal,
         selectedPosition: Position(nextBoard.minX, nextBoard.minY),
-        remainingSeconds: kTurnSeconds,
+        remainingSeconds: _turnSeconds,
         consecutiveSkips: 0,
         draftWord: '',
         liveValidationMessage: null,
@@ -793,7 +853,6 @@ class GameController extends StateNotifier<GameState> {
 
   // ── Timer ─────────────────────────────────────────────────
 
-  // ignore: unused_element – commented out for now, re-enable for timed mode.
   void _startTurnTimer() {
     _turnTimer?.cancel();
     _turnTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
@@ -805,25 +864,50 @@ class GameController extends StateNotifier<GameState> {
         return;
       }
       if (state.remainingSeconds <= 1) {
-        // Compute what the human player could have played before passing.
-        final bool isHumanTimeout = state.opponentType == OpponentType.bot &&
-            state.currentPlayer == PlayerId.a &&
-            state.phase == GamePhase.playing;
-        List<String> missedWords = const <String>[];
-        if (isHumanTimeout) {
-          missedWords = _computeAvailableWords();
+        final bool isHumanTurn = state.opponentType == OpponentType.bot &&
+            state.currentPlayer == PlayerId.a;
+
+        // ── Seed phase timeout: auto-play on behalf of user ──
+        if (isHumanTurn &&
+            (state.phase == GamePhase.seedA ||
+                state.phase == GamePhase.seedB)) {
+          final int newSkips = state.userSkipCount + 1;
+          state = state.copyWith(userSkipCount: newSkips);
+          await _autoPlaySeedOnBehalf();
+          return;
         }
 
+        // ── Playing phase timeout (human turn) ──
+        if (isHumanTurn && state.phase == GamePhase.playing) {
+          final int newSkips = state.userSkipCount + 1;
+          if (newSkips >= 3) {
+            state = state.copyWith(userSkipCount: newSkips);
+            _finishGame(
+                "Looks like you stepped away. Let's wrap this one up!");
+            return;
+          }
+
+          List<String> missedWords = _computeAvailableWords();
+          state = state.copyWith(userSkipCount: newSkips);
+          await _passTurnInternal();
+
+          String timeoutMsg = 'Time up. ${state.message}';
+          if (missedWords.isNotEmpty) {
+            final String suggestions = missedWords.take(5).join(', ');
+            timeoutMsg += ' You could have played: $suggestions';
+          }
+          state = state.copyWith(
+            remainingSeconds: _turnSeconds,
+            message: timeoutMsg,
+          );
+          return;
+        }
+
+        // ── Bot timeout or non-bot game ──
         await _passTurnInternal();
-
-        String timeoutMsg = 'Time up. ${state.message}';
-        if (missedWords.isNotEmpty) {
-          final String suggestions = missedWords.take(5).join(', ');
-          timeoutMsg += ' You could have played: $suggestions';
-        }
         state = state.copyWith(
-          remainingSeconds: kTurnSeconds,
-          message: timeoutMsg,
+          remainingSeconds: _turnSeconds,
+          message: 'Time up. ${state.message}',
         );
       } else {
         state = state.copyWith(remainingSeconds: state.remainingSeconds - 1);
@@ -837,7 +921,7 @@ class GameController extends StateNotifier<GameState> {
     required String newMessage,
     required bool resetSkips,
   }) {
-    final int spent = kTurnSeconds - state.remainingSeconds;
+    final int spent = _turnSeconds - state.remainingSeconds;
     final PlayerId justPlayed = state.currentPlayer;
     final PlayerId nextPlayer =
         justPlayed == PlayerId.a ? PlayerId.b : PlayerId.a;
@@ -848,7 +932,7 @@ class GameController extends StateNotifier<GameState> {
 
     state = state.copyWith(
       currentPlayer: nextPlayer,
-      remainingSeconds: kTurnSeconds,
+      remainingSeconds: _turnSeconds,
       selectedPosition: state.gridBounds != null
           ? Position(state.gridBounds!.minX, state.gridBounds!.minY)
           : const Position(0, 0),
@@ -884,8 +968,7 @@ class GameController extends StateNotifier<GameState> {
     final String winner = _winnerLabel(finalScores);
     state = state.copyWith(
       phase: GamePhase.finished,
-      message:
-          '$reason Winner: $winner (${finalScores.playerA.toStringAsFixed(1)} - ${finalScores.playerB.toStringAsFixed(1)}).',
+      message: '$reason $winner wins!',
       remainingSeconds: 0,
       sessionWinsA: nextA,
       sessionWinsB: nextB,
@@ -895,8 +978,9 @@ class GameController extends StateNotifier<GameState> {
   }
 
   String _winnerLabel(ScoreBoard scoreBoard) {
-    final String labelA = _playerLabel(PlayerId.a);
-    final String labelB = _playerLabel(PlayerId.b);
+    final bool isBotMode = state.opponentType == OpponentType.bot;
+    final String labelA = isBotMode ? 'You' : _playerLabel(PlayerId.a);
+    final String labelB = isBotMode ? 'Bot' : _playerLabel(PlayerId.b);
     if (scoreBoard.playerA > scoreBoard.playerB) {
       return labelA;
     }
@@ -906,9 +990,9 @@ class GameController extends StateNotifier<GameState> {
     final int aTime = state.totalTurnTime[PlayerId.a] ?? 0;
     final int bTime = state.totalTurnTime[PlayerId.b] ?? 0;
     if (aTime == bTime) {
-      return 'Tie';
+      return "It's a tie —  nobody";
     }
-    return aTime < bTime ? '$labelA (faster)' : '$labelB (faster)';
+    return aTime < bTime ? labelA : labelB;
   }
 
   // ── Bot turn logic ────────────────────────────────────────
@@ -1028,6 +1112,44 @@ class GameController extends StateNotifier<GameState> {
     } else {
       // Truly no overlapping word found (extremely unlikely).
       await _passTurnInternal();
+    }
+  }
+
+  /// Auto-play a seed word on behalf of the user when they time out or skip.
+  Future<void> _autoPlaySeedOnBehalf() async {
+    if (state.phase == GamePhase.seedA) {
+      // Pick a common starting word (4-7 letters).
+      final Set<String> candidates = <String>{};
+      for (final String letter
+          in const <String>['E', 'A', 'T', 'O', 'S', 'R', 'I', 'N']) {
+        for (final String word in _dictionary.getWordsForLetter(letter)) {
+          if (word.length >= 4 && word.length <= 7) {
+            candidates.add(word);
+            if (candidates.length >= 30) break;
+          }
+        }
+        if (candidates.length >= 30) break;
+      }
+      if (candidates.isNotEmpty) {
+        final List<String> list = candidates.toList();
+        final String chosen = list[Random().nextInt(list.length)];
+        state = state.copyWith(
+          message: 'Bot played "$chosen" on your behalf.',
+          remainingSeconds: _turnSeconds,
+        );
+        await _submitWordInternal(chosen);
+      }
+    } else if (state.phase == GamePhase.seedB) {
+      // Reuse the bot's seed-finding logic to place a vertical word.
+      state = state.copyWith(
+        message: 'Bot is placing the second seed for you...',
+        remainingSeconds: _turnSeconds,
+      );
+      await _botPlaySeed();
+      // If _botPlaySeed couldn't find a word (shouldn't happen), pass.
+      if (state.phase == GamePhase.seedB) {
+        await _passTurnInternal();
+      }
     }
   }
 

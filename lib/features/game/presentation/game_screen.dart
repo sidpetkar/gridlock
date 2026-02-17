@@ -3,13 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../services/haptic_service.dart';
+import '../../../services/settings_service.dart';
 import '../../../services/sound_service.dart';
 import '../application/game_controller.dart';
 import '../domain/board_engine.dart';
 import '../domain/scoring_engine.dart';
 import 'home_screen.dart';
 import 'widgets/board_grid.dart';
-// import 'widgets/timer_bar.dart'; // TODO: re-enable for timed mode
 import 'widgets/word_input_panel.dart';
 
 // iOS web/PWA can report oversized keyboard insets and jump focused inputs.
@@ -33,7 +34,8 @@ class _GameScreenState extends ConsumerState<GameScreen>
     _inputFocusNode = FocusNode(onKeyEvent: _handleKeyEvent);
     _sheetAnimController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 280),
+      reverseDuration: const Duration(milliseconds: 200),
     );
   }
 
@@ -100,9 +102,19 @@ class _GameScreenState extends ConsumerState<GameScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Sync game controller when timer settings change mid-game.
+    ref.listen<SettingsState>(settingsProvider, (previous, next) {
+      if (previous == null) return;
+      if (previous.timerEnabled != next.timerEnabled ||
+          previous.timerSeconds != next.timerSeconds) {
+        ref.read(gameControllerProvider.notifier).syncTimerSettings();
+      }
+    });
+
     final GameState state = ref.watch(gameControllerProvider);
     final GameController controller =
         ref.read(gameControllerProvider.notifier);
+    final SettingsState settings = ref.watch(settingsProvider);
     final ScoreBoard scores = controller.scores;
     final Map<Position, String> previewLetters =
         controller.draftPreviewLetters;
@@ -282,7 +294,12 @@ class _GameScreenState extends ConsumerState<GameScreen>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               // Score header: User left-aligned, Bot right-aligned
-              _MobileScoreHeader(state: state, scores: scores),
+              _MobileScoreHeader(
+                state: state,
+                scores: scores,
+                timerEnabled: settings.timerEnabled,
+                timerTotal: settings.timerSeconds,
+              ),
               const SizedBox(height: 8),
               // Grid + commentary: natural height, slightly above center
               Expanded(
@@ -299,8 +316,8 @@ class _GameScreenState extends ConsumerState<GameScreen>
                           state.message,
                           style:
                               Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: const Color(0xFF9CA3AF),
-                                    fontSize: 11,
+                                    color: const Color(0xFF8B939E),
+                                    fontSize: 12.5,
                                   ),
                           textAlign: TextAlign.center,
                           maxLines: 1,
@@ -317,6 +334,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
                 padding: const EdgeInsets.only(bottom: 24),
                 child: _MobileBottomBar(
                   onHome: () async {
+                    HapticService.mediumTap();
                     await SoundService.playButtonTap();
                     if (!context.mounted) return;
                     Navigator.of(context).pushReplacement(
@@ -329,14 +347,24 @@ class _GameScreenState extends ConsumerState<GameScreen>
                     );
                   },
                   onSkip: () async {
+                    HapticService.mediumTap();
                     await SoundService.playButtonTap();
                     await controller.passTurn();
                   },
+                  onPauseResume: () async {
+                    HapticService.mediumTap();
+                    await SoundService.playButtonTap();
+                    controller.togglePause();
+                  },
                   onRestart: () async {
+                    HapticService.mediumTap();
                     await SoundService.playButtonTap();
                     controller.resetGame();
                   },
                   isInputEnabled: controller.isHumanInputEnabled,
+                  isPaused: state.isPaused,
+                  phase: state.phase,
+                  timerEnabled: settings.timerEnabled,
                 ),
               ),
             ],
@@ -370,6 +398,10 @@ class _GameScreenState extends ConsumerState<GameScreen>
 
   Widget _buildHeader(
       BuildContext context, GameState state, GameController controller) {
+    final SettingsState settings = ref.read(settingsProvider);
+    final bool showTimer =
+        settings.timerEnabled && state.phase != GamePhase.finished;
+
     return Row(
       children: <Widget>[
         Text(
@@ -378,6 +410,13 @@ class _GameScreenState extends ConsumerState<GameScreen>
                 fontWeight: FontWeight.w600,
               ),
         ),
+        if (showTimer) ...<Widget>[
+          const Spacer(),
+          _CompactTimer(
+            remaining: state.remainingSeconds,
+            total: settings.timerSeconds,
+          ),
+        ],
         const Spacer(),
         _OpponentSelector(
           value: state.opponentType,
@@ -584,7 +623,10 @@ class _GameOverCard extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           FilledButton(
-            onPressed: onRestart,
+            onPressed: () {
+              HapticService.mediumTap();
+              onRestart();
+            },
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF111111),
               shape: const RoundedRectangleBorder(
@@ -725,7 +767,10 @@ class _RestartButtonState extends State<_RestartButton> {
       onExit: (_) => setState(() => _hovered = false),
       child: _hovered
           ? FilledButton(
-              onPressed: widget.onPressed,
+              onPressed: () {
+                HapticService.mediumTap();
+                widget.onPressed();
+              },
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF111111),
                 shape: const RoundedRectangleBorder(
@@ -735,7 +780,10 @@ class _RestartButtonState extends State<_RestartButton> {
               child: const Text('Restart'),
             )
           : OutlinedButton(
-              onPressed: widget.onPressed,
+              onPressed: () {
+                HapticService.mediumTap();
+                widget.onPressed();
+              },
               style: OutlinedButton.styleFrom(
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.zero,
@@ -781,6 +829,7 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
   }
 
   Future<void> _submit(String word) async {
+    HapticService.heavyTap();
     Navigator.of(context).pop();
     await widget.controller.submitWord(word);
   }
@@ -838,6 +887,7 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
                     final String word = _suggestions[i];
                     return GestureDetector(
                       onTap: () {
+                        HapticService.lightTap();
                         widget.textController.text = word;
                         widget.textController.selection =
                             TextSelection.collapsed(offset: word.length);
@@ -892,6 +942,11 @@ class _KeyboardSheetState extends State<_KeyboardSheet> {
                         border: InputBorder.none,
                         focusedBorder: InputBorder.none,
                         enabledBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                        filled: false,
+                        isDense: true,
                         contentPadding:
                             const EdgeInsets.symmetric(vertical: 10),
                       ),
@@ -954,16 +1009,20 @@ class _OpponentSelector extends StatelessWidget {
   }
 }
 
-// ── Mobile score header ────────────────────────────────────────
+// ── Mobile score header with optional timer ────────────────────
 
 class _MobileScoreHeader extends StatelessWidget {
   const _MobileScoreHeader({
     required this.state,
     required this.scores,
+    required this.timerEnabled,
+    required this.timerTotal,
   });
 
   final GameState state;
   final ScoreBoard scores;
+  final bool timerEnabled;
+  final int timerTotal;
 
   String _labelFor(PlayerId player) {
     if (state.opponentType == OpponentType.bot) {
@@ -974,72 +1033,146 @@ class _MobileScoreHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final TextStyle labelStyle =
+        Theme.of(context).textTheme.labelSmall!.copyWith(
+              color: const Color(0xFF9CA3AF),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.0,
+            );
+    final TextStyle scoreStyle =
+        Theme.of(context).textTheme.headlineMedium!.copyWith(
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF111111),
+            );
+
+    final bool showTimer =
+        timerEnabled && state.phase != GamePhase.finished;
+
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.baseline,
-      textBaseline: TextBaseline.alphabetic,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: <Widget>[
         // User – left aligned
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              _labelFor(PlayerId.a),
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: const Color(0xFF9CA3AF),
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1.0,
-                  ),
-            ),
-            Text(
-              scores.playerA.toStringAsFixed(1),
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF111111),
-                  ),
-            ),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(_labelFor(PlayerId.a), style: labelStyle),
+              Text(scores.playerA.toStringAsFixed(1), style: scoreStyle),
+            ],
+          ),
         ),
-        const Spacer(),
+        // Timer – fixed center position (always reserves space when enabled)
+        if (showTimer)
+          _CompactTimer(
+            remaining: state.remainingSeconds,
+            total: timerTotal,
+            isPaused: state.isPaused,
+          ),
         // Bot – right aligned
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: <Widget>[
-            Text(
-              _labelFor(PlayerId.b),
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: const Color(0xFF9CA3AF),
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1.0,
-                  ),
-            ),
-            Text(
-              scores.playerB.toStringAsFixed(1),
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF111111),
-                  ),
-            ),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              Text(_labelFor(PlayerId.b), style: labelStyle),
+              Text(scores.playerB.toStringAsFixed(1), style: scoreStyle),
+            ],
+          ),
         ),
       ],
     );
   }
 }
 
-// ── Mobile bottom bar: Home | Skip | Restart ────────────────────
+// ── Compact timer (circular countdown) ─────────────────────────
+
+class _CompactTimer extends StatelessWidget {
+  const _CompactTimer({
+    required this.remaining,
+    required this.total,
+    this.isPaused = false,
+  });
+
+  final int remaining;
+  final int total;
+  final bool isPaused;
+
+  @override
+  Widget build(BuildContext context) {
+    final double progress = total <= 0 ? 0.0 : (remaining / total).clamp(0.0, 1.0);
+    final bool urgent = remaining <= 5 && remaining > 0;
+
+    // Grey out colours when paused.
+    const Color pausedRing = Color(0xFFD1D5DB);
+    const Color pausedText = Color(0xFFBDBDBD);
+    const Color pausedBg = Color(0xFFF3F4F6);
+
+    final Color ringColor = isPaused
+        ? pausedRing
+        : urgent
+            ? const Color(0xFFDC2626)
+            : const Color(0xFF111111);
+    final Color textColor = isPaused
+        ? pausedText
+        : urgent
+            ? const Color(0xFFDC2626)
+            : const Color(0xFF111111);
+    final Color bgColor = isPaused ? pausedBg : const Color(0xFFE5E7EB);
+
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          // Background ring
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 3,
+              backgroundColor: bgColor,
+              valueColor: AlwaysStoppedAnimation<Color>(ringColor),
+            ),
+          ),
+          // Seconds text
+          Text(
+            '$remaining',
+            style: TextStyle(
+              fontFamily: 'SourceSerif4',
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: textColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Mobile bottom bar: Home | Skip | Pause/Restart ──────────────
 
 class _MobileBottomBar extends StatelessWidget {
   const _MobileBottomBar({
     required this.onHome,
     required this.onSkip,
+    required this.onPauseResume,
     required this.onRestart,
     required this.isInputEnabled,
+    required this.isPaused,
+    required this.phase,
+    required this.timerEnabled,
   });
 
   final VoidCallback onHome;
   final VoidCallback onSkip;
+  final VoidCallback onPauseResume;
   final VoidCallback onRestart;
   final bool isInputEnabled;
+  final bool isPaused;
+  final GamePhase phase;
+  final bool timerEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -1047,6 +1180,22 @@ class _MobileBottomBar extends StatelessWidget {
           color: const Color(0xFF111111),
         );
     final TextStyle disabled = base.copyWith(color: const Color(0xFFBDBDBD));
+
+    // Timer OFF → Home | Skip | Restart
+    // Timer ON, active → Home | Skip | Pause
+    // Timer ON, paused → Home | Skip | Resume
+    // Game finished (any) → Home | Skip | Restart
+    final bool useTimerControls = timerEnabled && phase != GamePhase.finished;
+
+    final String rightLabel;
+    final VoidCallback rightAction;
+    if (useTimerControls) {
+      rightLabel = isPaused ? 'Resume' : 'Pause';
+      rightAction = onPauseResume;
+    } else {
+      rightLabel = 'Restart';
+      rightAction = onRestart;
+    }
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1060,8 +1209,8 @@ class _MobileBottomBar extends StatelessWidget {
           child: Text('Skip', style: isInputEnabled ? base : disabled),
         ),
         GestureDetector(
-          onTap: onRestart,
-          child: Text('Restart', style: base),
+          onTap: rightAction,
+          child: Text(rightLabel, style: base),
         ),
       ],
     );
